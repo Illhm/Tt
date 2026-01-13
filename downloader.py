@@ -63,27 +63,64 @@ def download_tiktok_video():
     # Step 3: Parse response
     soup = BeautifulSoup(post_response.text, "html.parser")
 
-    # Look for the download link "Without watermark"
-    download_link_tag = soup.find("a", class_="without_watermark")
+    # Try to find HD download link first
+    hd_link_tag = soup.find("a", class_="without_watermark_hd")
+    download_url = None
+    filename = "tiktok_video.mp4"
 
-    if not download_link_tag:
-        # Fallback search by text or class part
-        download_link_tag = soup.find("a", class_="download_link", string=lambda text: "Without watermark" in text if text else False)
+    if hd_link_tag:
+        print("Found HD link tag.")
+        data_directurl = hd_link_tag.get("data-directurl")
 
-    if not download_link_tag:
-        print("Could not find download link in response.")
-        return
+        # We also need the new 'tt' token from the response
+        tt_input = soup.find("input", {"name": "tt"})
+        if tt_input:
+            token2 = tt_input.get("value")
 
-    download_url = download_link_tag.get("href")
-    print(f"Download URL found: {download_url}")
+            # Now make the request for the HD link
+            hd_post_url = "https://ssstik.io" + data_directurl
+            print(f"Requesting HD link...")
+
+            hd_data = {
+                "tt": token2
+            }
+
+            try:
+                hd_response = session.post(hd_post_url, headers=post_headers, data=hd_data)
+                hd_response.raise_for_status()
+
+                if "hx-redirect" in hd_response.headers:
+                    download_url = hd_response.headers["hx-redirect"]
+                    print(f"HD Download URL found via hx-redirect: {download_url}")
+                    filename = "tiktok_video_hd.mp4"
+                else:
+                    print("No hx-redirect header found in HD response.")
+            except Exception as e:
+                print(f"Error requesting HD link: {e}")
+
+    # Fallback to standard quality if HD failed or wasn't found
+    if not download_url:
+        print("Falling back to standard quality.")
+        # Look for the download link "Without watermark"
+        download_link_tag = soup.find("a", class_="without_watermark")
+
+        if not download_link_tag:
+            # Fallback search by text or class part
+            download_link_tag = soup.find("a", class_="download_link", string=lambda text: "Without watermark" in text if text else False)
+
+        if not download_link_tag:
+            print("Could not find download link in response.")
+            return
+
+        download_url = download_link_tag.get("href")
+        print(f"Download URL found: {download_url}")
 
     # Step 4: Download video
-    print("Downloading video...")
+    print(f"Downloading video to {filename}...")
     try:
         video_response = session.get(download_url, headers=headers, stream=True)
         video_response.raise_for_status()
 
-        filename = "tiktok_video.mp4"
         with open(filename, "wb") as f:
             for chunk in video_response.iter_content(chunk_size=8192):
                 f.write(chunk)
