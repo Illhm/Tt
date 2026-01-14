@@ -10,13 +10,14 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Iterable
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 REQUEST_BODY_PATH = Path("00012_POST_tikdownloader.io_api_ajaxSearch/02-request-body.txt")
 API_URL = "https://tikdownloader.io/api/ajaxSearch"
-DEFAULT_QUERY = "https://vt.tiktok.com/ZS5cvC8ua/"
+DEFAULT_QUERY = "https://vt.tiktok.com/ZS5cwAEE2/"
 DEFAULT_LANG = "id"
+DEFAULT_IMAGE_OUTPUT = Path("downloaded_thumbnail")
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,25 @@ class DownloadLinkParser(HTMLParser):
     def handle_data(self, data: str) -> None:
         if self._in_link:
             self._current_label.append(data)
+
+
+class ImageSourceParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.image_url: str | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self.image_url:
+            return
+        attr_map = {name: value for name, value in attrs}
+        if tag == "img":
+            src = attr_map.get("src")
+            if src:
+                self.image_url = src
+        if tag == "video":
+            poster = attr_map.get("poster")
+            if poster:
+                self.image_url = poster
 
 
 @dataclass(frozen=True)
@@ -110,6 +130,27 @@ def parse_convert_metadata(html: str) -> ConvertMetadata:
     )
 
 
+def parse_image_url(html: str) -> str | None:
+    parser = ImageSourceParser()
+    parser.feed(html)
+    return parser.image_url
+
+
+def download_image(image_url: str, output_base: Path) -> Path:
+    parsed = urlparse(image_url)
+    extension = Path(parsed.path).suffix or ".jpg"
+    output_path = output_base.with_suffix(extension)
+    request = Request(
+        image_url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (local-script)",
+        },
+    )
+    with urlopen(request, timeout=30) as response:
+        output_path.write_bytes(response.read())
+    return output_path
+
+
 def print_links(links: Iterable[DownloadLink]) -> None:
     print("Download links:")
     for link in links:
@@ -139,8 +180,18 @@ def main() -> int:
     html = response.get("data", "")
     links = parse_download_links(html)
     metadata = parse_convert_metadata(html)
+    image_url = parse_image_url(html)
     print_links(links)
     print_metadata(metadata)
+    if image_url:
+        try:
+            saved_path = download_image(image_url, DEFAULT_IMAGE_OUTPUT)
+        except Exception as exc:
+            print(f"\nImage download failed: {exc}")
+        else:
+            print(f"\nDownloaded image: {saved_path}")
+    else:
+        print("\nNo image URL found to download.")
     return 0
 
 
